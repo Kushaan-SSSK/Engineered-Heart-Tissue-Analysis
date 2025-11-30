@@ -1,0 +1,437 @@
+import ij.*;
+import ij;
+import ij.io.*;
+import ij.gui.GenericDialog;
+import ij.gui.*;
+import ij.process.ByteProcessor;
+import ij.process.ImageProcessor;
+import ij.process.ShortProcessor;
+import ij.ImagePlus;
+import ij.process.ImageStatistics;
+import ij.measure.Measurements;
+import java.lang.Math;
+import org.micromanager.api.PositionList;
+import org.micromanager.api.Autofocus;
+import org.micromanager.api.AcquisitionOptions;
+import org.micromanager.PositionListDlg;
+import org.micromanager.api.MultiStagePosition;
+import mmcorej.CharVector;
+import mmcorej.StrVector;
+import java.util.regex.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+boolean debug = true;
+String savePath;
+fName = "Acquire-EHT";
+int TransposeMirror = 1;
+
+xyStage = mmc.getXYStageDevice();
+zStage = mmc.getFocusDevice();
+double currentX, currentY, currentZ;
+originX=-75385;
+originY=331012;
+double gapX=19500;
+double gapY=19500;
+
+camera = mmc.getCameraDevice();
+double defaultExposure;
+boolean cameraAutoExposure = true;
+boolean removeFlag = true;
+
+String autoExposeType="Once";
+String cameraWidth="500";
+String cameraHeight="1000";
+
+String arduinoPort="Arduino";
+String arduinoAddress="COM6";
+
+plateMake(boolean[] wellPlan,double originXin, double originYin, double gapXin,double gapYin,xyStg,zStg) {
+
+	boolean[] wells = wellPlan;
+	double gapX=gapXin;
+	double gapY=gapYin;
+	double originX=originXin;
+	double originY=originYin;
+	double originZ=0;
+	wellOrder = new int[] {0,6,12,18,19,13,7,1,2,8,14,20,21,15,9,3,4,10,16,22,23,17,11,5};
+	double[] xPos = new double[6];
+	double[] yPos = new double[4];
+	int currentWell;
+
+	xyStage=xyStg;
+	zStage=zStg;
+
+	for (x=0; x<6; x++) {
+		xPos[x]=x*gapX;
+	}
+	for (y=0; y<4; y++) {
+		yPos[y]=y*gapY;
+	}
+	findNextWell(int x) {
+		while (x<wells.length && wells[wellOrder[x]]==false ) {
+			x++;
+		}
+		if (x<wells.length) {
+			return(x);
+		} else {
+			return(-1);
+		}
+	}
+	setOrigin(double x,double y, double z) {
+		originX=x;
+		originY=y;
+		originZ=z;
+	}
+	getCurrentWellPosition() {
+		x=xPos[wellOrder[currentWell] % 6] + originX;
+		y=yPos[(int) Math.floor(wellOrder[currentWell] / 6)] + originY;
+		MultiStagePosition p = new MultiStagePosition(xyStage,x,y,zStage,mmc.getPosition(zStage));
+		logOutput("current well X: "+x+" Y: "+y);
+		return(p);
+	}
+	nextWell() {
+		currentWell=findNextWell(++currentWell);
+		return(getWell());
+	}
+	getWell() {
+		if (currentWell>=0) {
+			return(wellOrder[currentWell]);
+		} else {
+			logOutput("invalid currentWell");
+			return(-1);
+		}
+	}
+	setToStart() {
+		logOutput("Reset plate");
+		currentWell=0;
+		return(wellOrder[currentWell]);
+	}
+	currentWell=findNextWell(0);
+	return(this);
+}
+
+boolean wellAcq(savePath,baseName,wellName,paceArray,nrFrames,secondsDelay,port,cameraAutoExposure) {
+	double exposureMS;
+
+	int removed;
+
+	nrChannels = nrSlices = nrPositions = 1;
+
+	width = (int) mmc.getImageWidth();
+	height = (int) mmc.getImageHeight();
+	bytesPerPixel = (int) mmc.getBytesPerPixel();
+	bitDepth = (int) mmc.getImageBitDepth();
+	camera=mmc.getCameraDevice();
+
+	logOutput("acquire one well "+cameraAutoExposure);
+	for (i=0; i<paceArray.length; i++) {
+		rate=Integer.parseInt(paceArray[i]);
+		logOutput("rate: "+rate);
+
+		exposureMS=mmc.getExposure();
+		logOutput("exposure: "+exposureMS);
+		if (cameraAutoExposure) {
+			arduinoWhite(arduinoPort);
+			mmc.sleep(500);
+			mmc.snapImage();
+		}
+
+		arduinoRun(arduinoPort,rate);
+		mmc.sleep(secondsDelay*1000);
+		logOutput("Starting acquisition nrFrames "+nrFrames);
+		String acquisitionName=baseName+"_"+wellName + "_"+String.valueOf(rate);
+		acqName = gui.getUniqueAcquisitionName(acquisitionName);
+		gui.openAcquisition(acqName, savePath,
+		nrFrames, nrChannels, nrSlices, nrPositions,
+		false,
+		true);
+		gui.initializeAcquisition(acqName, width, height, bytesPerPixel, bitDepth);
+		mmc.startSequenceAcquisition(nrFrames, 0, true);
+		frame = 0;
+		removed=0;
+		while (mmc.getRemainingImageCount() > 0 || mmc.isSequenceRunning(camera) ) {
+			if (mmc.getRemainingImageCount() > 0) {
+				img = mmc.popNextTaggedImage();
+				gui.addImageToAcquisition(acqName, frame, 0, 0, 0, img);
+				frame++;
+				while (removeFlag && mmc.getRemainingImageCount() > 0)	{
+      			img=mmc.popNextTaggedImage();
+      			removed=removed+1;
+				}
+			}
+		}
+		mmc.stopSequenceAcquisition();
+		logOutput("Completed acquisition");
+
+		logOutput("turning off pacer");
+		arduinoStop(arduinoPort);
+
+		logOutput("removed: "+removed);
+
+	}
+	return(true);
+}
+
+arduinoAttach(arduinoPort,arduinoAddress) {
+	try {
+		mmc.unloadDevice(arduinoPort);
+	} catch(msg) {
+		logOutput("caught error: "+msg);
+	}
+	mmc.loadDevice(arduinoPort, "SerialManager", arduinoAddress);
+	mmc.setProperty(arduinoPort, "BaudRate",9600);
+	mmc.setProperty(arduinoPort, "AnswerTimeout",2000);
+	mmc.initializeDevice(arduinoPort);
+	print("Successfully set up Arduino");
+}
+
+boolean arduinoCheck(arduinoPort) {
+	mmc.setSerialPortCommand(arduinoPort,"IDaa","\r");
+		return(true);
+}
+
+arduinoRun(arduinoPort, rate) {
+	msg="RUNa";
+	val="0000"+rate;
+	msg=msg+val.substring(val.length()-4,val.length());
+	mmc.setSerialPortCommand(arduinoPort,msg,"\r");
+}
+
+arduinoStop(arduinoPort) {
+	mmc.setSerialPortCommand(arduinoPort,"STOP","\r");
+}
+
+arduinoWhite(port) {
+	mmc.setSerialPortCommand(port,"WHIT","\r");
+}
+
+arduinoFocus(arduinoPort,val) {
+	if (val<0) {
+		val="0000"+(-1*val);
+		msg="FaDN";
+	} else {
+		val="0000"+val;
+		msg="FaUP";
+	}
+	msg=msg+val.substring(val.length()-4,val.length());
+	mmc.setSerialPortCommand(arduinoPort,msg,"\r");
+}
+
+logOutput(s) {
+	if (debug==true) {
+		print(s);
+	}
+	return;
+}
+
+mmc.setProperty(xyStage,"TransposeMirrorX",TransposeMirror);
+mmc.setProperty(xyStage,"TransposeMirrorY",TransposeMirror);
+logOutput("current stage X="+mmc.getXPosition(xyStage)+", Y= "+mmc.getYPosition(xyStage));
+logOutput("origin X="+originX+", Y= "+originY);
+
+mmc.stopSequenceAcquisition();
+
+arduinoAttach(arduinoPort,arduinoAddress);
+mmc.sleep(2000);
+if (!arduinoCheck(arduinoPort) ) {
+	logOutput("fatal error: unable to connect to Arduino");
+	exit();
+} else logOutput("Arduino connected");
+
+GenericDialog dlg = new GenericDialog("EHT Acquisition Parameters");
+
+gui.closeAllAcquisitions();
+
+rowLabels = new String[] {"A","B","C","D"," "};
+columnLabels = new String[] {"1","2","3","4","5","6","-all-row"};
+
+maxwells=(rowLabels.length)*(columnLabels.length);
+
+boolean[] chkDefaults = new boolean[maxwells];
+boolean[] chkVals = new boolean[maxwells];
+boolean[] wells = new boolean[(rowLabels.length-1)*(columnLabels.length-1)];
+dlg.addMessage("Select the wells to image");
+
+for (i=0;i<chkDefaults.length;i++) {
+	chkDefaults[i]= false;
+}
+
+String[] labels = new String[maxwells];
+
+for (i=0; i < rowLabels.length; i++) {
+	for (j=0; j < columnLabels.length; j++) {
+		labels[(i*columnLabels.length)+j] = rowLabels[i]+columnLabels[j];
+	}
+}
+
+i=rowLabels.length-1;
+j=columnLabels.length-1;
+labels[(i*columnLabels.length)+j]="all";
+
+for (j=0; j < columnLabels.length-1; j++) {
+	labels[(i*columnLabels.length)+j] = "all-col"+columnLabels[j];
+}
+
+dlg.addCheckboxGroup(5,7, labels , chkDefaults);
+
+String[] wellChooser=new String[] {"Use above selection","Do not move stage"};
+dlg.addRadioButtonGroup("Stage control: ",wellChooser,1,2,"Use above selection");
+dlg.addMessage(" ");
+dlg.addStringField("Acquisition frames per second (integer): ","   30");
+dlg.addStringField("Pacing beats per minute per period (e.g. 60:120:150): ","   60");
+dlg.addStringField("Seconds delay for each well before beginning capture (integer): ","  10");
+dlg.addStringField("Seconds per period (integer): ","   30");
+dlg.addStringField("Microseconds for default exposure (double, 0=camera auto exp.): ","    0");
+dlg.addStringField("Basename of acquisition: ",fName);
+
+dlg.addStringField("well A1 position X: ",String.valueOf(originX));
+dlg.addStringField("well A1 position Y: ",String.valueOf(originY));
+dlg.addStringField("Movement between wellS, horizontal: ",String.valueOf(gapX));
+dlg.addStringField("Movement between wells, vertical: ",String.valueOf(gapY));
+dlg.addCheckbox("Set stage coordinates to well A1", false);
+
+dlg.addMessage("Fill in the values, focus, and press OK");
+dlg.showDialog();
+
+if (dlg.wasCanceled() ) {
+	return;
+}
+
+for (i=0; i<rowLabels.length; i++) {
+	for (j=0; j<columnLabels.length; j++) {
+		chkVals[(i*columnLabels.length)+j] = dlg.getNextBoolean();
+	}
+}
+for (i=0; i<rowLabels.length-1; i++) {
+	for (j=0; j<columnLabels.length-1; j++) {
+		wells[i*(columnLabels.length-1)+j]=chkVals[i*columnLabels.length+j];
+	}
+}
+if (chkVals[chkVals.length-1]==true) {
+	for (i=0; i<wells.length; i++) {
+		wells[i]=true;
+	}
+}
+for (j=0; j<columnLabels.length-1; j++) {
+	if (chkVals[4*columnLabels.length+j]==true) {
+		for (i=0; i<rowLabels.length-1; i++) {
+			wells[i*(columnLabels.length-1)+j]=true;
+		}
+	}
+}
+for (i=0; i<rowLabels.length-1; i++) {
+	if (chkVals[i*columnLabels.length+columnLabels.length-1]==true) {
+		for (j=0; j<columnLabels.length-1; j++) {
+			wells[i*(columnLabels.length-1)+j]=true;
+		}
+	}
+}
+
+fps = Integer.parseInt(dlg.getNextString().trim());
+paceString = dlg.getNextString().trim();
+paceArray=paceString.split(":");
+secondsDelay = Integer.parseInt(dlg.getNextString().trim());
+secondsPerPeriod = Integer.parseInt(dlg.getNextString().trim());
+String s = dlg.getNextString().trim();
+defaultExposure=Double.valueOf(s);
+
+camera = mmc.getCameraDevice();
+if (defaultExposure == 0) {
+	cameraAutoExposure=true;
+	defaultExposure=1000.0/(double)fps;
+} else {
+	cameraAutoExposure=false;
+}
+
+fName = dlg.getNextString();
+fName.trim();
+
+String wellSelector=dlg.getNextRadioButton();
+if (wellSelector == "Use above selection") {
+	wellSelectorFlag = true;
+} else
+	wellSelectorFlag = false;
+
+if (debug==true) {
+	for (i=0; i<wells.length; i++) {
+		print(i + ": "+ wells[i]);
+	}
+	print("frames per second: "+fps);
+	print("pace string: "+paceString);
+	print("seconds per period: "+secondsPerPeriod);
+}
+
+originX=Integer.parseInt(dlg.getNextString().trim());
+originY=Integer.parseInt(dlg.getNextString().trim());
+gapX=Double.parseDouble(dlg.getNextString().trim());
+gapY=Double.parseDouble(dlg.getNextString().trim());
+resetStageCoord=dlg.getNextBoolean();
+
+print("gap x,y: "+gapX+", "+gapY);
+	
+DirectoryChooser chooser = new DirectoryChooser("Choose the output directory");
+savePath = chooser.getDirectory();
+baseName=fName;
+
+myPlate = plateMake(wells,originX,originY,gapX,gapY,xyStage,zStage);
+
+if (resetStageCoord) {
+	originX=mmc.getXPosition(xyStage);
+	originY=mmc.getYPosition(xyStage);
+}
+
+myPlate.setOrigin(originX,originY,currentZ);
+logOutput("Origin: "+originX+", "+originY);
+
+wellNumber=myPlate.getWell();
+MultiStagePosition msp;
+
+mmc.setProperty(camera,"AcquisitionFramerate",fps);
+mmc.setProperty(camera,"AcquisitionFramerateEnable",1);
+mmc.setProperty(camera,"PixelType","Mono8");
+mmc.setProperty(camera,"SensorHeight",cameraHeight);
+mmc.setProperty(camera,"SensorWidth",cameraWidth);
+
+mmc.setExposure(defaultExposure);
+if (cameraAutoExposure==true) {
+	mmc.setProperty(camera,"ExposureAuto",autoExposeType);
+	logOutput("Exposure: "+autoExposeType);
+	arduinoWhite(arduinoPort);
+	mmc.sleep(1000);
+	for (i=0; i<10; i++)
+		mmc.snapImage();
+} else {
+	mmc.setProperty(camera,"ExposureAuto","Off");
+	mmc.setExposure(defaultExposure);
+	logOutput("Expsoure: Manual "+defaultExposure);
+}
+
+nrFrames=fps*secondsPerPeriod;
+
+if (wellSelectorFlag == true) {
+	logOutput("---- Starting acquisition ----");
+	while (wellNumber>=0) {
+		col=wellNumber % 6;
+		row=Math.floor(wellNumber / 6);
+		wellName=labels[(int)row*7+col];
+		logOutput("Well: "+wellName);
+		msp=myPlate.getCurrentWellPosition();
+		mmc.setXYPosition(xyStage,msp.getX(),msp.getY());
+		mmc.waitForDevice(xyStage);
+		wellAcq(savePath, baseName, wellName,paceArray,nrFrames,secondsDelay,arduinoPort,cameraAutoExposure);
+		wellNumber = myPlate.nextWell();
+	}
+	i=myPlate.setToStart();
+	msp=myPlate.getCurrentWellPosition();
+	mmc.setXYPosition(xyStage,msp.getX(),msp.getY());
+} else {
+	wellName="Current";
+	logOutput("Acquire current position");
+	wellAcq(savePath, baseName, wellName,paceArray,nrFrames,arduinoPort,cameraAutoExposure);
+}
+
+logOutput("done");
+logOutput("Data location: "+savePath);
+logOutput("Expt name: "+baseName);
+IJ.showMessage("Completed acquisition");

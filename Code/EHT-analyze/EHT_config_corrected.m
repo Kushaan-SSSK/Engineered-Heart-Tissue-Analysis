@@ -1,6 +1,6 @@
-config.pixel_size = 1000/67;
+config.pixel_size = 67;
 
-config.post_radius = 0.5;
+config.post_radius = 1.0;
 config.diastolic_distance = 8.0;
 config.tissue_height = 12.0;
 
@@ -17,4 +17,4 @@ config.peak_threshold = 0.5;
 config.outlier_sensitivity = 10;
 
 config.sg_poly_order = 4;
-config.sg_window_size = 5;
+config.sg_window_size = 11;

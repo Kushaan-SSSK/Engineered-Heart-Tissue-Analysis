@@ -1,8 +1,6 @@
 results_folder = 'C:\Users\kusha\Downloads\11.11.25 EHT\EHT-scope-main\Results';
 
-pixel_size = 67;
-
-config_file = 'EHT_config.m';
+config_file = 'EHT_config_corrected.m';
 
 fprintf('=== Multi-Pacing Force Analysis ===\n');
 
@@ -24,8 +22,14 @@ pacing_rates = unique(data.Pacing_Rate_BPM);
 fprintf('Found %d wells: %s\n', length(wells), strjoin(string(wells), ', '));
 fprintf('Found %d pacing rates: %s BPM\n\n', length(pacing_rates), mat2str(pacing_rates));
 
-fprintf('=== Starting Force Analysis ===\n');
+fprintf('=== Starting Force Analysis ===\n'); % Load config file
 config = load_EHT_config(config_file);
+
+% Conversion: config.pixel_size is in microns/pixel (e.g., 14.9)
+% We need pixels per mm for analysis
+% 1 mm = 1000 microns.
+% pixels/mm = 1000 / (microns/pixel)
+pixel_to_pass = 1000 / config.pixel_size;
 
 fig_num = 1;
 
@@ -49,7 +53,7 @@ for i = 1:length(wells)
         writetable(subset, temp_file, 'Delimiter', char(9));
 
         try
-            analyze_EHT_with_figure(temp_file, pixel_size, pacing_hz, config_file, fig_num);
+            analyze_EHT_with_figure(temp_file, config.pixel_size, pacing_hz, config_file, fig_num);
             fprintf('Analysis completed successfully (Figure %d)\n', fig_num);
             fig_num = fig_num + 1;
         catch ME

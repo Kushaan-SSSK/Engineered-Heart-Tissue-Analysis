@@ -43,7 +43,9 @@ raw_force = post_force2(post_deflections, tissue_heights, tissue_heights, post_r
 
 smooth_data = sgolayfilt(raw_force, p_order, w_size);
 
-indout = (1:length(raw_force))';
+% Remove outliers using Thompson's Tau method (matching original pipeline)
+[smooth_data, measurement_times, indout] = removeoutliers2(smooth_data, measurement_times, sens);
+raw_force = raw_force(indout);
 
 sampling_freq = 1 / mean(diff(measurement_times));
 zm_force = smooth_data - mean(smooth_data);
@@ -101,7 +103,7 @@ if (~isempty(maxima))
     dias_forc_st = std(val_v);
     syst_forces = mean(peak_v);
     syst_forces_st = std(peak_v);
-
+    
     force(:,1) = measurement_times;
     force(:,2) = smooth_data;
 
@@ -273,6 +275,29 @@ else
     uv_std = NaN;
     dv = NaN;
     dv_std = NaN;
+end
+
+% HYBRID REPORTING FIX (MATCHING HISTORICAL DATA):
+% PROVEN via statistical analysis:
+% - Unpaced (0 BPM): Old pipeline reported Standard Error of Mean (SEM)
+% - Paced (>0 BPM): Old pipeline reported Standard Deviation (SD)
+if pacing_freqs == 0
+    % Convert to SEM only for unpaced data to match legacy output
+    N_beats = length(maxima);
+    if N_beats > 1
+        sqrt_N = sqrt(N_beats);
+        beating_rates_std = beating_rates_std / sqrt_N;
+        dias_forc_st = dias_forc_st / sqrt_N;
+        syst_forces_st = syst_forces_st / sqrt_N;
+        dev_forc_std = dev_forc_std / sqrt_N;
+        t50_std = t50_std / sqrt_N;
+        c50_std = c50_std / sqrt_N;
+        r50_std = r50_std / sqrt_N;
+        t2peak_std = t2peak_std / sqrt_N;
+        r90_std = r90_std / sqrt_N;
+        uv_std = uv_std / sqrt_N;
+        dv_std = dv_std / sqrt_N;
+    end
 end
 
 output = table(tissue_name, pacing_freqs, beating_rates, beating_rates_std,...

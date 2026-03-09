@@ -25,11 +25,8 @@ fprintf('Found %d pacing rates: %s BPM\n\n', length(pacing_rates), mat2str(pacin
 fprintf('=== Starting Force Analysis ===\n'); % Load config file
 config = load_EHT_config(config_file);
 
-% Conversion: config.pixel_size is in microns/pixel (e.g., 14.9)
-% We need pixels per mm for analysis
-% 1 mm = 1000 microns.
-% pixels/mm = 1000 / (microns/pixel)
-pixel_to_pass = 1000 / config.pixel_size;
+% pixel_size is in pixels/mm (e.g., 67 px/mm), matching the original pipeline convention.
+
 
 fig_num = 1;
 

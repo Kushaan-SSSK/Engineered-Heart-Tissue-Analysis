@@ -29,6 +29,8 @@ end
 log = table2array(log);
 log(:,1) = log(:,1)./1000;
 
+
+
 post_distances = sqrt((log(:,4)-log(:,2)).^2+(log(:,3)-log(:,5)).^2) ./ pixel;
 measurement_times = log(post_distances~=0,1);
 measurement_times = measurement_times - min(measurement_times);
@@ -36,6 +38,8 @@ post_distances = post_distances(post_distances~=0);
 
 actual_diastolic_dist = diastolicdist;
 fprintf('  Using fixed diastolic distance: %.3f mm\n', actual_diastolic_dist);
+
+
 
 total_deflections = actual_diastolic_dist - post_distances;
 post_deflections = total_deflections / 2;
@@ -128,7 +132,7 @@ time = measurement_times;
 for z = 1:length(maxima)-1
     Tl = [];
     Tr = [];
-    minimum = (val_v(max_ind(z))+val_v(max_ind(z+1)))/2;
+    minimum = (val_v(max_ind(z))+val_v(max_ind(z+1)))/2;  % Average of adjacent diastolic levels (matches original pipeline)
 
     F90 = (maxima(z) - minimum)*.90 + minimum;
     F10 = (maxima(z) - minimum)*.10 + minimum;

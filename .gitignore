@@ -2,3 +2,50 @@ Results/
 D31_plate1_kushaan try_181125/
 *.tmp
 *.bak
+
+# ── Data & results (never commit raw imaging data or outputs) ──
+TestingData/
+TestingData_Results/
+Temp_TestData_*/
+Templates/
+
+# ── Excel / spreadsheet data files ──
+*.xlsx
+*.xls
+*.csv
+
+# ── Scratch analysis scripts (investigation artifacts) ──
+compare_march7.py
+compare_results.py
+compare_tracking.py
+test_relative_deflection.py
+analyze_tracker_offset.py
+reproduce_filtering.py
+verify_claims.py
+gen_report.py
+run_matlab_pipeline.bat
+
+# ── Text output / log files ──
+*.txt
+*.log
+run_log.txt
+comparison_report.md
+claims_analysis.txt
+d28_check.txt
+full_proof.txt
+output_forces.txt
+reproduction_output.txt
+t50_output.txt
+velocity_check.txt
+velocity_output.txt
+excel_dump.*
+nul
+
+# ── Pipeline runner scripts (local convenience, not part of core code) ──
+run_pipeline_TestingData.m
+run_analysis_only.m
+Code/EHT-analyze/verify_pipeline.m
+
+# ── MATLAB artifacts ──
+*.asv
+*.mex*

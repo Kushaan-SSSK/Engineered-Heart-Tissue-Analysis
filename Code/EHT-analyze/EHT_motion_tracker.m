@@ -292,6 +292,8 @@ end
 
 
 function timestamps = track_motion_with_templates(folder_path, timestamps, template0, template1, config)
+% Track post motion using full-template normxcorr2.
+% Reports the template center coordinates each frame (drift-free global matching).
 
 tif_files = dir(fullfile(folder_path, '*.tif'));
 tif_files = {tif_files.name};
@@ -303,37 +305,23 @@ if isempty(tif_files)
 end
 
 for frame_idx = 1:length(tif_files)
-    img_path = fullfile(folder_path, tif_files{frame_idx});
-    img = imread(img_path);
-
-    if size(img, 3) == 3
-        img = rgb2gray(img);
-    end
+    img = imread(fullfile(folder_path, tif_files{frame_idx}));
+    if size(img, 3) == 3; img = rgb2gray(img); end
     img = double(img);
 
     corr0 = normxcorr2(template0, img);
     [max_val0, max_idx0] = max(corr0(:));
     [y0, x0] = ind2sub(size(corr0), max_idx0);
-
-    x0 = x0 - size(template0, 2) + 1 + floor((size(template0, 2)-1)/2);
-    y0 = y0 - size(template0, 1) + 1 + floor((size(template0, 1)-1)/2);
-
-    if max_val0 < config.score_threshold
-        x0 = 0;
-        y0 = 0;
-    end
+    x0 = x0 - size(template0,2) + 1 + floor((size(template0,2)-1)/2);
+    y0 = y0 - size(template0,1) + 1 + floor((size(template0,1)-1)/2);
+    if max_val0 < config.score_threshold; x0 = 0; y0 = 0; end
 
     corr1 = normxcorr2(template1, img);
     [max_val1, max_idx1] = max(corr1(:));
     [y1, x1] = ind2sub(size(corr1), max_idx1);
-
-    x1 = x1 - size(template1, 2) + 1 + floor((size(template1, 2)-1)/2);
-    y1 = y1 - size(template1, 1) + 1 + floor((size(template1, 1)-1)/2);
-
-    if max_val1 < config.score_threshold
-        x1 = 0;
-        y1 = 0;
-    end
+    x1 = x1 - size(template1,2) + 1 + floor((size(template1,2)-1)/2);
+    y1 = y1 - size(template1,1) + 1 + floor((size(template1,1)-1)/2);
+    if max_val1 < config.score_threshold; x1 = 0; y1 = 0; end
 
     if frame_idx <= length(timestamps)
         timestamps(frame_idx).x1 = x1;
@@ -344,6 +332,9 @@ for frame_idx = 1:length(tif_files)
 end
 
 end
+
+
+
 
 
 function write_results_v2(results, result_path, wells, data_path)

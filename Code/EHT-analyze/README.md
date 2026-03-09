@@ -27,6 +27,12 @@ EHT_motion_tracker(template_path, data_path, result_path, perform_annotation);
 - If not found, it looks for well-based templates in `template_path`.
 - If `perform_annotation` is true, it will ask you to draw boxes around posts for each well.
 
+> [!WARNING]
+> **Template Drawing Protocol:**
+> When drawing templates, crop the box *as tightly as possible* around the upper or lower tip of the bare post. Do not include large blocks of background tissue. `normxcorr2` tracks the average motion of the entire drawn block. If background tissue is included, it will falsely dampen the force waveform amplitude, which will artificially shift the C50, R50, and UV timing metrics.
+
+
+
 ### 2. Force Analysis
 
 Calculate force and beat metrics using `multi_pacing_analysis.m`.

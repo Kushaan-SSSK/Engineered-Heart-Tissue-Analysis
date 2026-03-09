@@ -16,12 +16,13 @@ The platform is designed to image engineered heart tissues suspended on flexible
 3.  **Force Analysis** (`multi_pacing_analysis.m`): Calculate force, contraction/relaxation kinetics, and beat metrics
 
 ## Key Features
-
-✓ No ImageJ dependency - all analysis in MATLAB
-✓ Automated batch processing of multiple wells
-✓ Physiological parameter extraction (force, beat rate, kinetics)
-✓ Customizable for different tissue geometries and pacing protocols
+- **No ImageJ dependency** - all tracking and analysis handled entirely in MATLAB
+- **Automated batch processing** of multiple wells and pacing frequencies
+- **Dynamic self-calibrating diastolic baseline** computation to auto-correct for tracking offsets
+- **Physiological parameter extraction** (force, beat rate, kinetics, T50, C50, R50)
+- **Customizable** for different tissue geometries and spacing (configured in `EHT_config.m`)
 
 ## Getting Started
 
-See `Code/EHT-analyze/README.md` for detailed usage instructions.
+See `Code/EHT-analyze/README.md` for detailed usage instructions and **critical template-drawing guidelines.**
+

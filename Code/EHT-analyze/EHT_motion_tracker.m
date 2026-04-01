@@ -1,4 +1,4 @@
-function EHT_motion_tracker(template_path, data_path, result_path, perform_annotation, config_file)
+function EHT_motion_tracker(template_path, data_path, result_path, perform_annotation, config_file, force_reannotation)
 
 if nargin < 4
     perform_annotation = true;
@@ -6,6 +6,10 @@ end
 
 if nargin < 5
     config_file = '';
+end
+
+if nargin < 6
+    force_reannotation = false;
 end
 
 config = load_EHT_config(config_file);
@@ -95,7 +99,7 @@ end
 fprintf('\n');
 
 if perform_annotation
-    annotate_posts_by_well(wells, well_names, template_path, config);
+    annotate_posts_by_well(wells, well_names, template_path, config, force_reannotation);
 end
 
 results = struct();
@@ -179,9 +183,16 @@ fprintf('\n=== EHT Motion Tracking Complete ===\n');
 end
 
 
-function annotate_posts_by_well(wells, well_names, template_path, config)
+function annotate_posts_by_well(wells, well_names, template_path, config, force_reannotation)
+
+if nargin < 5
+    force_reannotation = false;
+end
 
 fprintf('\n=== Post Annotation (Once Per Well) ===\n');
+if force_reannotation
+    fprintf('NOTE: force_reannotation=true. Existing templates will be overwritten.\n');
+end
 
 for i = 1:length(well_names)
     well_id = well_names{i};
@@ -198,9 +209,13 @@ for i = 1:length(well_names)
     template0_path = fullfile(well_template_dir, 'template0.tif');
     template1_path = fullfile(well_template_dir, 'template1.tif');
 
-    if exist(template0_path, 'file') && exist(template1_path, 'file')
-        fprintf('  Templates already exist, skipping annotation\n');
+    if ~force_reannotation && exist(template0_path, 'file') && exist(template1_path, 'file')
+        fprintf('  Templates already exist, skipping annotation (use force_reannotation=true to redraw)\n');
         continue;
+    end
+
+    if force_reannotation && exist(template0_path, 'file')
+        fprintf('  Overwriting existing templates for well %s\n', well_id);
     end
 
     img_path = well.first_image;

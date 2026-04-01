@@ -262,7 +262,13 @@ for i = 1:length(well_names)
             imwrite(uint8(template1), template0_path);
             imwrite(uint8(template2), template1_path);
 
-            fprintf('  ✓ Templates saved to %s\n', well_template_dir);
+            % Save crop rectangles for WNCC post-center initialization
+            rects.pos1 = pos1;  % [xmin ymin width height] of post 0 in full frame
+            rects.pos2 = pos2;  % [xmin ymin width height] of post 1 in full frame
+            rects_path = fullfile(well_template_dir, 'rects.mat');
+            save(rects_path, 'rects');
+
+            fprintf('  Templates saved to %s\n', well_template_dir);
             fprintf('  These templates will be used for all %d videos in well %s\n', ...
                     length(well.folders), well_id);
         else
@@ -307,8 +313,11 @@ end
 
 
 function timestamps = track_motion_with_templates(folder_path, timestamps, template0, template1, config)
-% Track post motion using full-template normxcorr2.
-% Reports the template center coordinates each frame (drift-free global matching).
+% Track post motion using Weighted NCC (WNCC) with annular weights.
+% Frame 1 uses full normxcorr2 to bootstrap; frames 2-N use ROI-based WNCC
+% centered on the previous position. Falls back to normxcorr2 if WNCC peak
+% is below threshold (e.g. defocused frames, occlusion).
+% Set config.use_wncc = false to revert to plain normxcorr2 for all frames.
 
 tif_files = dir(fullfile(folder_path, '*.tif'));
 tif_files = {tif_files.name};
@@ -319,24 +328,104 @@ if isempty(tif_files)
     return;
 end
 
+Ht0 = size(template0, 1);  Wt0 = size(template0, 2);
+Ht1 = size(template1, 1);  Wt1 = size(template1, 2);
+
+% --- Read WNCC config fields with safe defaults ---
+use_wncc      = isfield(config, 'use_wncc')               && config.use_wncc;
+weights_kind  = 'annulus';
+if isfield(config, 'wncc_weights_kind');       weights_kind = config.wncc_weights_kind; end
+ring_hw       = 3;
+if isfield(config, 'wncc_ring_half_width');    ring_hw      = config.wncc_ring_half_width; end
+ring_soft     = 1.0;
+if isfield(config, 'wncc_ring_softness');      ring_soft    = config.wncc_ring_softness; end
+roi_hs        = 50;
+if isfield(config, 'wncc_roi_half_size');      roi_hs       = config.wncc_roi_half_size; end
+wncc_thresh   = 0.20;
+if isfield(config, 'wncc_fallback_threshold'); wncc_thresh  = config.wncc_fallback_threshold; end
+score_thresh  = config.score_threshold;
+
+S0 = [];  S1 = [];
+center0 = [];  radius0 = [];
+center1 = [];  radius1 = [];
+
+if use_wncc
+    % --- Detect post centers and radii in template space ---
+    [center0, radius0, m0] = detectPostCenter(template0, false);
+    [center1, radius1, m1] = detectPostCenter(template1, false);
+    fprintf('  WNCC: post0 center=[%.1f,%.1f] r=%.1fpx (%s); post1 center=[%.1f,%.1f] r=%.1fpx (%s)\n', ...
+            center0(1), center0(2), radius0, m0, center1(1), center1(2), radius1, m1);
+
+    % --- Build weight matrices ---
+    try
+        switch lower(weights_kind)
+            case 'annulus'
+                W0 = makeAnnulusWeights(size(template0), center0, radius0 * 0.95, ring_hw, ring_soft);
+                W1 = makeAnnulusWeights(size(template1), center1, radius1 * 0.95, ring_hw, ring_soft);
+            case 'gaussian'
+                W0 = makeGaussianWeightsFromTemplate(size(template0), center0, radius0*0.35, radius0*1.1);
+                W1 = makeGaussianWeightsFromTemplate(size(template1), center1, radius1*0.35, radius1*1.1);
+            otherwise  % 'disk'
+                [Xg0, Yg0] = meshgrid(1:Wt0, 1:Ht0);
+                W0 = double(hypot(Xg0 - center0(1), Yg0 - center0(2)) <= radius0);
+                [Xg1, Yg1] = meshgrid(1:Wt1, 1:Ht1);
+                W1 = double(hypot(Xg1 - center1(1), Yg1 - center1(2)) <= radius1);
+        end
+
+        % --- Precompute WNCC kernels (once per template, not per frame) ---
+        S0 = wncc2_precompute(double(template0), W0);
+        S1 = wncc2_precompute(double(template1), W1);
+    catch ME
+        warning('track_motion:WNCCSetupFailed', ...
+                'WNCC setup failed: %s\nFalling back to normxcorr2.', ME.message);
+        use_wncc = false;
+        S0 = [];  S1 = [];
+    end
+end
+
+% Previous-frame positions for ROI centering (NaN until frame 1 is done)
+prev_x0 = NaN;  prev_y0 = NaN;
+prev_x1 = NaN;  prev_y1 = NaN;
+
 for frame_idx = 1:length(tif_files)
     img = imread(fullfile(folder_path, tif_files{frame_idx}));
     if size(img, 3) == 3; img = rgb2gray(img); end
     img = double(img);
+    imgH = size(img, 1);  imgW = size(img, 2);
 
-    corr0 = normxcorr2(template0, img);
-    [max_val0, max_idx0] = max(corr0(:));
-    [y0, x0] = ind2sub(size(corr0), max_idx0);
-    x0 = x0 - size(template0,2) + 1 + floor((size(template0,2)-1)/2);
-    y0 = y0 - size(template0,1) + 1 + floor((size(template0,1)-1)/2);
-    if max_val0 < config.score_threshold; x0 = 0; y0 = 0; end
+    % =========================================================
+    %  POST 0  (template0)
+    % =========================================================
+    if use_wncc && ~isempty(S0) && frame_idx > 1 && ~isnan(prev_x0) && prev_x0 > 0
+        [x0, y0, peak0] = wncc_track_post( ...
+            img, S0, center0, prev_x0, prev_y0, roi_hs, Ht0, Wt0, imgH, imgW);
 
-    corr1 = normxcorr2(template1, img);
-    [max_val1, max_idx1] = max(corr1(:));
-    [y1, x1] = ind2sub(size(corr1), max_idx1);
-    x1 = x1 - size(template1,2) + 1 + floor((size(template1,2)-1)/2);
-    y1 = y1 - size(template1,1) + 1 + floor((size(template1,1)-1)/2);
-    if max_val1 < config.score_threshold; x1 = 0; y1 = 0; end
+        if peak0 < wncc_thresh
+            % WNCC peak too low — fall back to global NCC for this frame
+            [x0, y0, peak0] = full_ncc_track(template0, img, Ht0, Wt0);
+        end
+    else
+        % Frame 1 or WNCC disabled: use full normxcorr2
+        [x0, y0, peak0] = full_ncc_track(template0, img, Ht0, Wt0);
+    end
+    if peak0 < score_thresh;  x0 = 0;  y0 = 0;  end
+    prev_x0 = x0;  prev_y0 = y0;
+
+    % =========================================================
+    %  POST 1  (template1)
+    % =========================================================
+    if use_wncc && ~isempty(S1) && frame_idx > 1 && ~isnan(prev_x1) && prev_x1 > 0
+        [x1, y1, peak1] = wncc_track_post( ...
+            img, S1, center1, prev_x1, prev_y1, roi_hs, Ht1, Wt1, imgH, imgW);
+
+        if peak1 < wncc_thresh
+            [x1, y1, peak1] = full_ncc_track(template1, img, Ht1, Wt1);
+        end
+    else
+        [x1, y1, peak1] = full_ncc_track(template1, img, Ht1, Wt1);
+    end
+    if peak1 < score_thresh;  x1 = 0;  y1 = 0;  end
+    prev_x1 = x1;  prev_y1 = y1;
 
     if frame_idx <= length(timestamps)
         timestamps(frame_idx).x1 = x1;
@@ -346,6 +435,72 @@ for frame_idx = 1:length(tif_files)
     end
 end
 
+end
+
+
+% --------------------------------------------------------
+%  Helper: ROI-based WNCC tracking for one post, one frame
+% --------------------------------------------------------
+function [x_out, y_out, peak] = wncc_track_post( ...
+    img, S, centerXY, prev_x, prev_y, roi_hs, Ht, Wt, imgH, imgW)
+
+cx = centerXY(1);   % post center col in template coords (1-based)
+cy = centerXY(2);   % post center row in template coords (1-based)
+
+% ROI bounds such that template center aligned at (prev_x, prev_y)
+% gives valid-output center at (roi_hs+1, roi_hs+1).
+xMin = max(1, round(prev_x - (cx - 1) - roi_hs));
+yMin = max(1, round(prev_y - (cy - 1) - roi_hs));
+xMax = min(imgW, xMin + 2*roi_hs + Wt - 1);
+yMax = min(imgH, yMin + 2*roi_hs + Ht - 1);
+
+ROI = img(yMin:yMax, xMin:xMax);
+
+[C, ~] = wncc2_apply(ROI, S, 'fft');
+[peak, pidx] = max(C(:));
+[py, px] = ind2sub(size(C), pidx);
+
+% Subpixel refinement (separable quadratic)
+[dxs, dys] = spq(C, py, px);
+
+% Convert valid-map peak to full-image template-center position:
+%   template top-left in full image: (xMin + px - 1, yMin + py - 1)
+%   template center: add (cx-1, cy-1)
+x_out = xMin + (px - 1) + (cx - 1) + dxs;
+y_out = yMin + (py - 1) + (cy - 1) + dys;
+
+end
+
+
+% --------------------------------------------------------
+%  Helper: Full-frame normxcorr2 (frame 1 bootstrap + fallback)
+% --------------------------------------------------------
+function [x_out, y_out, peak] = full_ncc_track(template, img, Ht, Wt)
+corr = normxcorr2(template, img);
+[peak, idx] = max(corr(:));
+[yr, xr] = ind2sub(size(corr), idx);
+% normxcorr2 'full' peak → template center position
+x_out = xr - Wt + 1 + floor((Wt - 1) / 2);
+y_out = yr - Ht + 1 + floor((Ht - 1) / 2);
+end
+
+
+% --------------------------------------------------------
+%  Helper: Separable quadratic sub-pixel refinement
+% --------------------------------------------------------
+function [dx, dy] = spq(C, py, px)
+dx = 0;  dy = 0;
+if py > 1 && py < size(C,1) && px > 1 && px < size(C,2)
+    c = C(py, px);
+    l = C(py, px-1);  r = C(py, px+1);
+    u = C(py-1, px);  d = C(py+1, px);
+    denx = l - 2*c + r;
+    deny = u - 2*c + d;
+    if abs(denx) > eps;  dx = 0.5*(l - r) / denx;  end
+    if abs(deny) > eps;  dy = 0.5*(u - d) / deny;  end
+    dx = max(-1, min(1, dx));
+    dy = max(-1, min(1, dy));
+end
 end
 
 

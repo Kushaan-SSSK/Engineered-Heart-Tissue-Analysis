@@ -53,6 +53,15 @@ config.outlier_sensitivity = 10;
 config.sg_poly_order = 4;
 config.sg_window_size = 11;
 
+% --- WNCC Tracking Parameters ---
+% Set use_wncc = false to revert to standard normxcorr2 (for regression testing)
+config.use_wncc                 = true;      % Enable weighted NCC tracking
+config.wncc_weights_kind        = 'annulus'; % 'annulus' | 'gaussian' | 'disk'
+config.wncc_ring_half_width     = 3;         % Ring half-width in pixels
+config.wncc_ring_softness       = 1.0;       % Sigmoid softness of ring edges (px)
+config.wncc_roi_half_size       = 50;        % ROI half-size: search ±50px around prev pos
+config.wncc_fallback_threshold  = 0.20;      % Use full normxcorr2 if WNCC peak < this
+
 end
 
 

@@ -319,23 +319,6 @@ if isempty(tif_files)
     return;
 end
 
-    % Auto-calibrate the physical inner edges from the templates
-    prof0 = mean(template0, 1);
-    thresh0 = (max(prof0) + min(prof0)) / 2;
-    first_dark0_idx = find(prof0 < thresh0, 1, 'first');
-    last_dark0_idx = find(prof0 < thresh0, 1, 'last');
-    first_dark0 = 0; last_dark0 = size(template0, 2) - 1;
-    if ~isempty(first_dark0_idx); first_dark0 = first_dark0_idx - 1; end
-    if ~isempty(last_dark0_idx); last_dark0 = last_dark0_idx - 1; end
-
-    prof1 = mean(template1, 1);
-    thresh1 = (max(prof1) + min(prof1)) / 2;
-    first_dark1_idx = find(prof1 < thresh1, 1, 'first');
-    last_dark1_idx = find(prof1 < thresh1, 1, 'last');
-    first_dark1 = 0; last_dark1 = size(template1, 2) - 1;
-    if ~isempty(first_dark1_idx); first_dark1 = first_dark1_idx - 1; end
-    if ~isempty(last_dark1_idx); last_dark1 = last_dark1_idx - 1; end
-
 for frame_idx = 1:length(tif_files)
     img = imread(fullfile(folder_path, tif_files{frame_idx}));
     if size(img, 3) == 3; img = rgb2gray(img); end
@@ -344,26 +327,16 @@ for frame_idx = 1:length(tif_files)
     corr0 = normxcorr2(template0, img);
     [max_val0, max_idx0] = max(corr0(:));
     [y0_peak, x0_peak] = ind2sub(size(corr0), max_idx0);
-    x0_center = x0_peak - size(template0,2) + 1 + floor((size(template0,2)-1)/2);
+    x0 = x0_peak - size(template0,2) + 1 + floor((size(template0,2)-1)/2);
     y0 = y0_peak - size(template0,1) + 1 + floor((size(template0,1)-1)/2);
 
     corr1 = normxcorr2(template1, img);
     [max_val1, max_idx1] = max(corr1(:));
     [y1_peak, x1_peak] = ind2sub(size(corr1), max_idx1);
-    x1_center = x1_peak - size(template1,2) + 1 + floor((size(template1,2)-1)/2);
+    x1 = x1_peak - size(template1,2) + 1 + floor((size(template1,2)-1)/2);
     y1 = y1_peak - size(template1,1) + 1 + floor((size(template1,1)-1)/2);
-    
-    if max_val0 >= config.score_threshold && max_val1 >= config.score_threshold
-        if x0_center < x1_center
-            % template0 is left post, template1 is right post
-            x0 = x0_peak - size(template0,2) + 1 + last_dark0; % physical right edge of left post
-            x1 = x1_peak - size(template1,2) + 1 + first_dark1; % physical left edge of right post
-        else
-            % template0 is right post, template1 is left post
-            x0 = x0_peak - size(template0,2) + 1 + first_dark0; % physical left edge of right post
-            x1 = x1_peak - size(template1,2) + 1 + last_dark1; % physical right edge of left post
-        end
-    else
+
+    if ~(max_val0 >= config.score_threshold && max_val1 >= config.score_threshold)
         x0 = 0; y0 = 0; x1 = 0; y1 = 0;
     end
 
